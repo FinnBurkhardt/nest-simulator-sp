@@ -129,11 +129,6 @@ nest::ou_noise_generator::Parameters_::get( Dictionary& d ) const
 }
 
 void
-nest::ou_noise_generator::State_::get( Dictionary& d ) const
-{
-}
-
-void
 nest::ou_noise_generator::Parameters_::set( const Dictionary& d, const ou_noise_generator& n, Node* node )
 {
   update_value_param( d, names::mean, mean_, node );
@@ -199,8 +194,9 @@ nest::ou_noise_generator::init_buffers_()
   B_.logger_.reset();
 
   B_.next_step_ = 0;
+
+  // amplitudes are drawn in pre_run_hook(), once parameters are final
   B_.amps_.clear();
-  B_.amps_.resize( P_.num_targets_, 0.0 );
 }
 
 void
@@ -209,13 +205,6 @@ nest::ou_noise_generator::pre_run_hook()
   B_.logger_.init();
 
   StimulationDevice::pre_run_hook();
-  if ( P_.num_targets_ != B_.amps_.size() )
-  {
-    LOG( VerbosityLevel::INFO,
-      "ou_noise_generator::pre_run_hook()",
-      "The number of targets has changed, drawing new amplitudes." );
-    init_buffers_();
-  }
 
   V_.dt_steps_ = P_.dt_.get_steps();
 
@@ -225,6 +214,22 @@ nest::ou_noise_generator::pre_run_hook()
   V_.noise_amp_ = P_.std_ * std::sqrt( -std::expm1( -2.0 * h / P_.tau_ ) );
   V_.mean_weight_ = 1.0 - V_.prop_;
   V_.mean_incr_ = P_.mean_ * V_.mean_weight_;
+
+  if ( B_.amps_.size() < P_.num_targets_ )
+  {
+    // new amplitudes start in the stationary distribution N(mean, std^2);
+    // existing ones are kept so added targets do not disturb running processes
+    const size_t first_new = B_.amps_.size();
+    B_.amps_.resize( P_.num_targets_ );
+    for ( size_t i = first_new; i < P_.num_targets_; ++i )
+    {
+      B_.amps_[ i ] = P_.mean_ + P_.std_ * V_.normal_dist_( get_vp_specific_rng( get_thread() ) );
+    }
+  }
+  else if ( B_.amps_.size() > P_.num_targets_ )
+  {
+    B_.amps_.resize( P_.num_targets_ );
+  }
 }
 
 

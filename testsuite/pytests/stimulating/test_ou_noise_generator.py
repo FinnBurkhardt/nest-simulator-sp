@@ -84,6 +84,28 @@ def test_ou_noise_mean_and_variance(prepare_kernel, tau, dt):
     assert np.abs(current.var(ddof=1) - std**2) < 5 * np.sqrt(2.0 / n_eff) * std**2
 
 
+def test_ou_noise_generator_stationary_initialization(prepare_kernel):
+    """Initial amplitudes must come from the stationary distribution, not from zero."""
+    mean, std, tau, dt, n_gen = 200.0, 60.0, 100.0, 1.0, 200
+
+    # one target per generator gives n_gen independent initial draws in a single run
+    oungs = nest.Create("ou_noise_generator", n_gen, {"mean": mean, "std": std, "tau": tau, "dt": dt})
+    neurons = nest.Create("iaf_psc_alpha", n_gen)
+    nest.Connect(oungs, neurons, "one_to_one")
+    mm = nest.Create("multimeter", 1, {"record_from": ["I"], "interval": dt})
+    nest.Connect(mm, oungs, syn_spec={"weight": 1})
+    nest.Simulate(2 * dt)
+
+    ev = mm.get("events")
+    times = np.asarray(ev["times"])
+    initial = np.asarray(ev["I"], float)[times == times.min()]
+    assert initial.size == n_gen
+
+    # starting at zero instead would miss both by tens of sigma
+    assert np.abs(initial.mean() - mean) < 4 * std / np.sqrt(n_gen)
+    assert np.abs(initial.std(ddof=1) - std) < 4 * std / np.sqrt(2 * n_gen)
+
+
 def test_ou_noise_generator_autocorrelation(prepare_kernel):
     # verify lag-1 autocorr = exp(-dt/tau)
     dt = 0.1

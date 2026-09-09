@@ -199,8 +199,6 @@ private:
                     //!< Used for recording current
 
     State_();  //!< Sets default parameter values
-
-    void get( Dictionary& ) const;  //!< Store current values in dictionary
   };
 
   // ------------------------------------------------------------
@@ -268,7 +266,6 @@ inline void
 ou_noise_generator::get_status( Dictionary& d ) const
 {
   P_.get( d );
-  S_.get( d );
   StimulationDevice::get_status( d );
 
   d[ names::recordables ] = recordablesMap_.get_list();
