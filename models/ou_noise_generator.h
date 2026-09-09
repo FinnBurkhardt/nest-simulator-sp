@@ -227,7 +227,7 @@ private:
     normal_distribution normal_dist_; //!< normal distribution
 
     long dt_steps_;      //!< update interval in steps
-    double prop_;        //!< frequency [radian/s]
+    double prop_;        //!< propagator exp(-dt/tau)
     double noise_amp_;   //!< noise amplitude for one update, in pA
     double mean_weight_; //!< weight for mean contribution
     double mean_incr_;   //!< precomputed mean contribution per step

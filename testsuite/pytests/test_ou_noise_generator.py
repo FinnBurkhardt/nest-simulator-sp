@@ -59,33 +59,29 @@ def test_ou_noise_generator_incorrect_noise_dt(prepare_kernel):
         nest.Create("ou_noise_generator", {"dt": 0.25})
 
 
-def test_ou_noise_mean_and_variance(prepare_kernel):
-    # run for resolution dt=0.1 project to iaf_psc_alpha.
-    # create 100 repetitions of 1000ms simulations
+@pytest.mark.parametrize("tau, dt", [(1.0, 0.1), (10.0, 1.0)])
+def test_ou_noise_mean_and_variance(prepare_kernel, tau, dt):
+    """Stationary mean and variance must match mean and std**2."""
+    # mean must be non-zero, or the drift term vanishes
+    mean, std, simtime = 200.0, 60.0, 20000.0
 
-    oung = nest.Create("ou_noise_generator", {"mean": 0.0, "std": 60.0, "tau": 1.0, "dt": 0.1})
+    oung = nest.Create("ou_noise_generator", {"mean": mean, "std": std, "tau": tau, "dt": dt})
     neuron = nest.Create("iaf_psc_alpha")
 
     # we need to connect to a neuron otherwise the generator does not generate
     nest.Connect(oung, neuron)
-    mm = nest.Create("multimeter", 1, {"record_from": ["I"], "interval": 0.1})
+    mm = nest.Create("multimeter", 1, {"record_from": ["I"], "interval": dt})
     nest.Connect(mm, oung, syn_spec={"weight": 1})
+    nest.Simulate(simtime)
 
-    # Simulate for 100 times
-    n_sims = 100
-    ou_current = np.empty(n_sims)
-    for i in range(n_sims):
-        nest.Simulate(1000.0)
-        ou_current[i] = mm.get("events")["I"][-1]
+    current = np.asarray(mm.get("events")["I"], float)[burn_in_start(dt, tau) :]
 
-    curr_mean = np.mean(ou_current)
-    curr_var = np.var(ou_current)
-    expected_curr_mean = oung.mean
-    expected_curr_var = oung.std**2
+    # samples correlate over tau, so only len*dt/(2*tau) are independent
+    n_eff = len(current) * dt / (2.0 * tau)
+    sem = std / np.sqrt(n_eff)
 
-    # require mean within 3 std dev, std dev within 0.2 std dev
-    assert np.abs(curr_mean - expected_curr_mean) < 3 * oung.std
-    assert np.abs(curr_var - expected_curr_var) < 0.2 * curr_var
+    assert np.abs(current.mean() - mean) < 5 * sem
+    assert np.abs(current.var(ddof=1) - std**2) < 5 * np.sqrt(2.0 / n_eff) * std**2
 
 
 def test_ou_noise_generator_autocorrelation(prepare_kernel):
