@@ -137,8 +137,8 @@ public:
 
   size_t handles_test_event( DataLoggingRequest&, size_t ) override;
 
-  void get_status( DictionaryDatum& ) const override;
-  void set_status( const DictionaryDatum& ) override;
+  void get_status( Dictionary& ) const override;
+  void set_status( const Dictionary& ) override;
 
   void calibrate_time( const TimeConverter& tc ) override;
 
@@ -167,10 +167,10 @@ private:
    */
   struct Parameters_
   {
-    double mean_; //!< mean current, in pA
-    double std_;  //!< standard deviation of current, in pA
-    double tau_;  //!< OU time constant, in ms
-    Time dt_;     //!< time interval between updates
+    double mean_;  //!< mean current, in pA
+    double std_;   //!< standard deviation of current, in pA
+    double tau_;   //!< OU time constant, in ms
+    Time dt_;      //!< time interval between updates
 
     /**
      * Number of targets.
@@ -180,13 +180,13 @@ private:
      */
     size_t num_targets_;
 
-    Parameters_(); //!< Sets default parameter values
+    Parameters_();  //!< Sets default parameter values
     Parameters_( const Parameters_& );
     Parameters_& operator=( const Parameters_& p );
 
-    void get( DictionaryDatum& ) const; //!< Store current values in dictionary
+    void get( Dictionary& ) const;  //!< Store current values in dictionary
     //! Set values from dictionary
-    void set( const DictionaryDatum&, const ou_noise_generator&, Node* node );
+    void set( const Dictionary&, const ou_noise_generator&, Node* node );
 
     Time get_default_dt();
   };
@@ -195,12 +195,12 @@ private:
 
   struct State_
   {
-    double I_avg_; //!< Average of instantaneous currents computed
-                   //!< Used for recording current
+    double I_avg_;  //!< Average of instantaneous currents computed
+                    //!< Used for recording current
 
-    State_(); //!< Sets default parameter values
+    State_();  //!< Sets default parameter values
 
-    void get( DictionaryDatum& ) const; //!< Store current values in dictionary
+    void get( Dictionary& ) const;  //!< Store current values in dictionary
   };
 
   // ------------------------------------------------------------
@@ -213,8 +213,8 @@ private:
 
   struct Buffers_
   {
-    long next_step_; //!< time step of next change in current
-    AmpVec_ amps_;   //!< amplitudes, one per target
+    long next_step_;  //!< time step of next change in current
+    AmpVec_ amps_;    //!< amplitudes, one per target
     explicit Buffers_( ou_noise_generator& );
     Buffers_( const Buffers_&, ou_noise_generator& );
     UniversalDataLogger< ou_noise_generator > logger_;
@@ -224,13 +224,13 @@ private:
 
   struct Variables_
   {
-    normal_distribution normal_dist_; //!< normal distribution
+    normal_distribution normal_dist_;  //!< normal distribution
 
-    long dt_steps_;      //!< update interval in steps
-    double prop_;        //!< propagator exp(-dt/tau)
-    double noise_amp_;   //!< noise amplitude for one update, in pA
-    double mean_weight_; //!< weight for mean contribution
-    double mean_incr_;   //!< precomputed mean contribution per step
+    long dt_steps_;       //!< update interval in steps
+    double prop_;         //!< propagator exp(-dt/tau)
+    double noise_amp_;    //!< noise amplitude for one update, in pA
+    double mean_weight_;  //!< weight for mean contribution
+    double mean_incr_;    //!< precomputed mean contribution per step
   };
 
   double
@@ -265,21 +265,21 @@ ou_noise_generator::handles_test_event( DataLoggingRequest& dlr, size_t receptor
 }
 
 inline void
-ou_noise_generator::get_status( DictionaryDatum& d ) const
+ou_noise_generator::get_status( Dictionary& d ) const
 {
   P_.get( d );
   S_.get( d );
   StimulationDevice::get_status( d );
 
-  ( *d )[ names::recordables ] = recordablesMap_.get_list();
+  d[ names::recordables ] = recordablesMap_.get_list();
 }
 
 inline void
-ou_noise_generator::set_status( const DictionaryDatum& d )
+ou_noise_generator::set_status( const Dictionary& d )
 {
-  Parameters_ ptmp = P_;               // temporary copy in case of errors
-  ptmp.num_targets_ = P_.num_targets_; // Copy Constr. does not copy connections
-  ptmp.set( d, *this, this );          // throws if BadProperty
+  Parameters_ ptmp = P_;                // temporary copy in case of errors
+  ptmp.num_targets_ = P_.num_targets_;  // Copy Constr. does not copy connections
+  ptmp.set( d, *this, this );           // throws if BadProperty
 
   // We now know that ptmp is consistent. We do not write it back
   // to P_ before we are also sure that the properties to be set
@@ -315,6 +315,6 @@ ou_noise_generator::Parameters_::get_default_dt()
   return 10 * Time::get_resolution();
 }
 
-} // namespace
+}  // namespace
 
-#endif // OU_NOISE_GENERATOR_H
+#endif  // OU_NOISE_GENERATOR_H

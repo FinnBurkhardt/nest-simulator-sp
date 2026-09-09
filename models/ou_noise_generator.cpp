@@ -34,11 +34,6 @@
 #include "nest_impl.h"
 #include "universal_data_logger_impl.h"
 
-// Includes from sli:
-#include "dict.h"
-#include "dictutils.h"
-#include "doubledatum.h"
-
 namespace nest
 {
 void
@@ -53,7 +48,7 @@ template <>
 void
 RecordablesMap< ou_noise_generator >::create()
 {
-  insert_( Name( names::I ), &ou_noise_generator::get_I_avg_ );
+  insert_( names::I, &ou_noise_generator::get_I_avg_ );
 }
 }
 
@@ -62,9 +57,9 @@ RecordablesMap< ou_noise_generator >::create()
  * ---------------------------------------------------------------- */
 
 nest::ou_noise_generator::Parameters_::Parameters_()
-  : mean_( 0.0 ) // pA
-  , std_( 0.0 )  // pA
-  , tau_( 1.0 )  // ms
+  : mean_( 0.0 )  // pA
+  , std_( 0.0 )   // pA
+  , tau_( 1.0 )   // ms
   , dt_( get_default_dt() )
   , num_targets_( 0 )
 {
@@ -75,7 +70,7 @@ nest::ou_noise_generator::Parameters_::Parameters_( const Parameters_& p )
   , std_( p.std_ )
   , tau_( p.tau_ )
   , dt_( p.dt_ )
-  , num_targets_( 0 ) // we do not copy connections
+  , num_targets_( 0 )  // we do not copy connections
 {
   if ( dt_.is_step() )
   {
@@ -104,7 +99,7 @@ nest::ou_noise_generator::Parameters_::operator=( const Parameters_& p )
 }
 
 nest::ou_noise_generator::State_::State_()
-  : I_avg_( 0.0 ) // pA
+  : I_avg_( 0.0 )  // pA
 {
 }
 
@@ -125,31 +120,31 @@ nest::ou_noise_generator::Buffers_::Buffers_( const Buffers_& b, ou_noise_genera
  * ---------------------------------------------------------------- */
 
 void
-nest::ou_noise_generator::Parameters_::get( DictionaryDatum& d ) const
+nest::ou_noise_generator::Parameters_::get( Dictionary& d ) const
 {
-  ( *d )[ names::mean ] = mean_;
-  ( *d )[ names::std ] = std_;
-  ( *d )[ names::dt ] = dt_.get_ms();
-  ( *d )[ names::tau ] = tau_;
+  d[ names::mean ] = mean_;
+  d[ names::std ] = std_;
+  d[ names::dt ] = dt_.get_ms();
+  d[ names::tau ] = tau_;
 }
 
 void
-nest::ou_noise_generator::State_::get( DictionaryDatum& d ) const
+nest::ou_noise_generator::State_::get( Dictionary& d ) const
 {
 }
 
 void
-nest::ou_noise_generator::Parameters_::set( const DictionaryDatum& d, const ou_noise_generator& n, Node* node )
+nest::ou_noise_generator::Parameters_::set( const Dictionary& d, const ou_noise_generator& n, Node* node )
 {
-  updateValueParam< double >( d, names::mean, mean_, node );
-  updateValueParam< double >( d, names::std, std_, node );
-  updateValueParam< double >( d, names::tau, tau_, node );
+  update_value_param( d, names::mean, mean_, node );
+  update_value_param( d, names::std, std_, node );
+  update_value_param( d, names::tau, tau_, node );
   if ( tau_ <= 0 )
   {
     throw BadProperty( "tau > 0 required." );
   }
   double dt;
-  if ( updateValueParam< double >( d, names::dt, dt, node ) )
+  if ( update_value_param( d, names::dt, dt, node ) )
   {
     dt_ = Time::ms( dt );
   }
@@ -216,7 +211,9 @@ nest::ou_noise_generator::pre_run_hook()
   StimulationDevice::pre_run_hook();
   if ( P_.num_targets_ != B_.amps_.size() )
   {
-    LOG( M_INFO, "ou_noise_generator::pre_run_hook()", "The number of targets has changed, drawing new amplitudes." );
+    LOG( VerbosityLevel::INFO,
+      "ou_noise_generator::pre_run_hook()",
+      "The number of targets has changed, drawing new amplitudes." );
     init_buffers_();
   }
 
@@ -359,7 +356,7 @@ nest::ou_noise_generator::handle( DataLoggingRequest& e )
 auto
 nest::ou_noise_generator::set_data_from_stimulation_backend( std::vector< double >& input_param ) -> void
 {
-  Parameters_ ptmp = P_; // temporary copy in case of errors
+  Parameters_ ptmp = P_;  // temporary copy in case of errors
   ptmp.num_targets_ = P_.num_targets_;
 
   // For the input backend
@@ -369,10 +366,10 @@ nest::ou_noise_generator::set_data_from_stimulation_backend( std::vector< double
     {
       throw BadParameterValue( "The size of the data for the ou_noise_generator needs to be 3 [mean, std, tau]." );
     }
-    DictionaryDatum d = DictionaryDatum( new Dictionary );
-    ( *d )[ names::mean ] = DoubleDatum( input_param[ 0 ] );
-    ( *d )[ names::std ] = DoubleDatum( input_param[ 1 ] );
-    ( *d )[ names::tau ] = DoubleDatum( input_param[ 2 ] );
+    Dictionary d;
+    d[ names::mean ] = input_param[ 0 ];
+    d[ names::std ] = input_param[ 1 ];
+    d[ names::tau ] = input_param[ 2 ];
     ptmp.set( d, *this, this );
   }
 
@@ -393,6 +390,6 @@ nest::ou_noise_generator::calibrate_time( const TimeConverter& tc )
     const double old = P_.dt_.get_ms();
     P_.dt_ = P_.get_default_dt();
     std::string msg = String::compose( "Default for dt changed from %1 to %2 ms", old, P_.dt_.get_ms() );
-    LOG( M_INFO, get_name(), msg );
+    LOG( VerbosityLevel::INFO, get_name(), msg );
   }
 }
