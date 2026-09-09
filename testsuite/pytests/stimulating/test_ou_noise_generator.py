@@ -55,7 +55,7 @@ def test_ou_noise_generator_set_parameters(prepare_kernel):
 
 
 def test_ou_noise_generator_incorrect_noise_dt(prepare_kernel):
-    with pytest.raises(nest.kernel.NESTError, match="StepMultipleRequired"):
+    with pytest.raises(nest.NESTErrors.StepMultipleRequired):
         nest.Create("ou_noise_generator", {"dt": 0.25})
 
 
@@ -201,15 +201,14 @@ def _run_ou_with_on_off(
     nest.Connect(mm, ou, syn_spec={"weight": 1.0})
 
     for k in range(n_sections):
-        nest.SetStatus(
-            ou,
+        ou.set(
             {
                 "origin": float(k * section_ms),
                 "mean": mean,
                 "std": std,
                 "tau": tau,
                 "dt": dt,
-            },
+            }
         )
         nest.Simulate(section_ms)
 
