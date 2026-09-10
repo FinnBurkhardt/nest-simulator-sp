@@ -24,7 +24,6 @@
 #define SP_MANAGER_H
 
 // C++ includes:
-#include <limits>
 #include <vector>
 
 // Includes from libnestutil:
@@ -32,9 +31,11 @@
 
 // Includes from nestkernel:
 #include "growth_curve_factory.h"
+#include "mask.h"
 #include "nest_time.h"
 #include "nest_types.h"
 #include "node_collection.h"
+#include "parameter.h"
 
 
 namespace nest
@@ -122,11 +123,12 @@ public:
   void update_structural_plasticity( SPBuilder* );
 
   /**
-   * Enable structural plasticity
+   * Enable structural plasticity.
+   *
+   * @param spatial_kernel  Weights candidates by their positions; zero excludes. Null: uniform matching.
+   * @param spatial_mask    Excludes candidates whose source-target displacement lies outside it.
    */
-  void enable_structural_plasticity( bool use_gaussian_kernel,
-    double gaussian_kernel_sigma,
-    double max_distance = std::numeric_limits< double >::infinity() );
+  void enable_structural_plasticity( ParameterPTR spatial_kernel = ParameterPTR(), MaskPTR spatial_mask = MaskPTR() );
 
   /**
    * Disable structural plasticity
@@ -137,7 +139,8 @@ public:
 
   double get_structural_plasticity_update_interval() const;
 
-  double get_structural_plasticity_gaussian_kernel_sigma() const;
+  // Whether a spatial kernel or mask restricts the matching of vacant synaptic elements.
+  bool uses_spatial_matching() const;
 
   /**
    * Returns the minimum delay of all SP builders.
@@ -191,23 +194,18 @@ public:
   void global_shuffle( std::vector< size_t >& v, size_t n );
 
   /**
-   * Compute the Gaussian kernel value based on distance between two positions.
+   * Match vacant pre- to post-synaptic elements using the configured spatial kernel and mask.
    *
-   * @param distance Distance between two neurons.
-   * @param sigma Standard deviation for the Gaussian kernel.
-   * @return Gaussian kernel value.
-   */
-  double gaussian_kernel( const double distance, const double sigma );
-
-  /**
-   * Perform global shuffling of pre- and post-synaptic neurons based on spatial probabilities.
+   * Sequential weighted sampling without replacement, not a shuffle: each pre-synaptic element in
+   * turn draws a partner from those remaining. Elements with no admissible candidate stay unmatched.
    *
-   * @param pre_ids Vector of pre-synaptic neuron IDs.
-   * @param post_ids Vector of post-synaptic neuron IDs.
-   * @param pre_ids_results Vector to store shuffled pre-synaptic IDs.
-   * @param post_ids_results Vector to store shuffled post-synaptic IDs.
+   * @param pre_ids Pre-synaptic neuron IDs; emptied by this call.
+   * @param post_ids Post-synaptic neuron IDs; matched entries are removed.
+   * @param pre_ids_results Matched pre-synaptic IDs.
+   * @param post_ids_results Matched post-synaptic IDs.
+   * @param allow_autapses Whether a neuron may connect to itself.
    */
-  void global_shuffle_spatial( std::vector< size_t >& pre_ids,
+  void match_vacant_elements_spatially( std::vector< size_t >& pre_ids,
     std::vector< size_t >& post_ids,
     std::vector< size_t >& pre_ids_results,
     std::vector< size_t >& post_ids_results,
@@ -219,13 +217,13 @@ public:
   void gather_global_positions_and_ids();
 
   /**
-   * Perform roulette wheel selection to randomly select an index based on probabilities.
+   * Select an index at random, with probability proportional to the given weights.
    *
-   * @param probabilities Vector of probabilities for selection.
-   * @param rnd Random number.
+   * @param weights Non-negative, need not be normalised; at least one must be positive.
+   * @param rnd Random number drawn from [0, 1).
    * @return Selected index.
    */
-  int roulette_wheel_selection( const std::vector< double >& probabilities, double rnd );
+  size_t roulette_wheel_selection( const std::vector< double >& weights, double rnd );
 
   /**
    * Global list of neuron IDs used for structural plasticity computations.
@@ -251,22 +249,11 @@ private:
    */
   bool structural_plasticity_enabled_;
 
-  /**
-   * Flag indicating whether a Gaussian spatial kernel is used for connection
-   * probability computation.
-   */
-  bool structural_plasticity_use_gaussian_kernel_;
+  //! Optional spatial kernel weighting candidate partners; null means uniform matching.
+  ParameterPTR structural_plasticity_kernel_;
 
-  /**
-   * Standard deviation parameter for the Gaussian kernel used in
-   * spatial probability calculations.
-   */
-  double structural_plasticity_gaussian_kernel_sigma_;
-
-  /**
-   * Maximum allowed Euclidean distance between pre- and post-neurons.
-   */
-  double structural_plasticity_max_distance_;
+  //! Optional spatial mask excluding candidate partners; null means no spatial restriction.
+  MaskPTR structural_plasticity_mask_;
 
   /**
    * Dimensionality of the neuron positions
@@ -302,10 +289,10 @@ SPManager::get_structural_plasticity_update_interval() const
   return structural_plasticity_update_interval_;
 }
 
-inline double
-SPManager::get_structural_plasticity_gaussian_kernel_sigma() const
+inline bool
+SPManager::uses_spatial_matching() const
 {
-  return structural_plasticity_gaussian_kernel_sigma_;
+  return static_cast< bool >( structural_plasticity_kernel_ ) or static_cast< bool >( structural_plasticity_mask_ );
 }
 
 }  // namespace nest

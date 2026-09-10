@@ -45,9 +45,8 @@ SPManager::SPManager()
   : ManagerInterface()
   , structural_plasticity_update_interval_( 10000. )
   , structural_plasticity_enabled_( false )
-  , structural_plasticity_use_gaussian_kernel_( false )
-  , structural_plasticity_gaussian_kernel_sigma_( 1. )
-  , structural_plasticity_max_distance_( std::numeric_limits< double >::infinity() )
+  , structural_plasticity_kernel_()
+  , structural_plasticity_mask_()
   , pos_dim( 0 )
   , sp_conn_builders_()
   , growthcurve_factories_()
@@ -72,9 +71,8 @@ SPManager::initialize( const bool adjust_number_of_threads_or_rng_only )
 
   structural_plasticity_update_interval_ = 10000.;
   structural_plasticity_enabled_ = false;
-  structural_plasticity_use_gaussian_kernel_ = false;
-  structural_plasticity_gaussian_kernel_sigma_ = 1.;
-  structural_plasticity_max_distance_ = std::numeric_limits< double >::infinity();
+  structural_plasticity_kernel_ = ParameterPTR();
+  structural_plasticity_mask_ = MaskPTR();
 }
 
 void
@@ -266,38 +264,37 @@ SPManager::gather_global_positions_and_ids()
 
 
 // Method to perform roulette wheel selection
-int
-SPManager::roulette_wheel_selection( const std::vector< double >& probabilities, double rnd )
+size_t
+SPManager::roulette_wheel_selection( const std::vector< double >& weights, double rnd )
 {
-  if ( probabilities.empty() )
+  if ( weights.empty() )
   {
-    throw std::runtime_error( "Probabilities vector is empty." );
+    throw std::runtime_error( "Weight vector is empty." );
   }
 
-  std::vector< double > cumulative( probabilities.size() );
-  std::partial_sum( probabilities.begin(), probabilities.end(), cumulative.begin() );
+  std::vector< double > cumulative( weights.size() );
+  std::partial_sum( weights.begin(), weights.end(), cumulative.begin() );
 
-  // Ensure the sum of probabilities is greater than zero
-  double sum = cumulative.back();
-  if ( sum < 0.0 )
+  const double sum = cumulative.back();
+  if ( not std::isfinite( sum ) or sum <= 0.0 )
   {
-    throw std::runtime_error( "Sum of probabilities must be greater than zero." );
+    throw std::runtime_error( "Sum of selection weights must be finite and greater than zero." );
   }
-
 
   // Generate a random number in the range [0, sum)
-  double randomValue = rnd * sum;
+  const double random_value = rnd * sum;
 
-  // Perform binary search to find the selected index
-  auto it = std::lower_bound( cumulative.begin(), cumulative.end(), randomValue );
-  return static_cast< int >( std::distance( cumulative.begin(), it ) );
-}
-
-
-double
-SPManager::gaussian_kernel( const double distance, const double sigma )
-{
-  return std::exp( -distance * distance / ( sigma * sigma ) );
+  const auto it = std::upper_bound( cumulative.begin(), cumulative.end(), random_value );
+  if ( it == cumulative.end() )
+  {
+    size_t idx = weights.size() - 1;
+    while ( idx > 0 and weights[ idx ] <= 0.0 )
+    {
+      --idx;
+    }
+    return idx;
+  }
+  return static_cast< size_t >( std::distance( cumulative.begin(), it ) );
 }
 
 long
@@ -554,7 +551,7 @@ SPManager::create_synapses( std::vector< size_t >& pre_id,
   std::vector< size_t > pre_ids_results;
   std::vector< size_t > post_ids_results;
 
-  if ( !structural_plasticity_use_gaussian_kernel_ )
+  if ( not uses_spatial_matching() )
   {
     // Shuffle only the largest vector
     if ( pre_id_rnd.size() > post_id_rnd.size() )
@@ -577,14 +574,13 @@ SPManager::create_synapses( std::vector< size_t >& pre_id,
   }
   else
   {
-
-    // Shuffle pre_ids (Fisher-Yates) to randomize postsynaptic assignment order
-    for ( size_t i = pre_id_rnd.size() - 1; i > 0; --i )
+    // Fisher-Yates: the matching below is sequential, so the serving order must be random.
+    for ( size_t i = pre_id_rnd.size(); i > 1; --i )
     {
-      size_t j = get_rank_synced_rng()->ulrand( i + 1 );
-      std::swap( pre_id_rnd[ i ], pre_id_rnd[ j ] );
+      const size_t j = get_rank_synced_rng()->ulrand( i );
+      std::swap( pre_id_rnd[ i - 1 ], pre_id_rnd[ j ] );
     }
-    global_shuffle_spatial(
+    match_vacant_elements_spatially(
       pre_id_rnd, post_id_rnd, pre_ids_results, post_ids_results, sp_conn_builder->allows_autapses() );
   }
 
@@ -827,12 +823,13 @@ nest::SPManager::global_shuffle( std::vector< size_t >& v, size_t n )
   v = v2;
 }
 void
-SPManager::global_shuffle_spatial( std::vector< size_t >& pre_ids,
+SPManager::match_vacant_elements_spatially( std::vector< size_t >& pre_ids,
   std::vector< size_t >& post_ids,
   std::vector< size_t >& pre_ids_results,
   std::vector< size_t >& post_ids_results,
   bool allow_autapses )
 {
+
   const auto get_global_position = [ this ]( const size_t node_id )
   {
     const auto id_it = std::lower_bound( global_ids.begin(), global_ids.end(), node_id );
@@ -846,54 +843,76 @@ SPManager::global_shuffle_spatial( std::vector< size_t >& pre_ids,
       global_positions.begin() + position_idx * pos_dim, global_positions.begin() + ( position_idx + 1 ) * pos_dim );
   };
 
+  RngPtr rng = get_rank_synced_rng();
+
   while ( not pre_ids.empty() and not post_ids.empty() )
   {
-    size_t pre_id = pre_ids.back();
+    const size_t pre_id = pre_ids.back();
     pre_ids.pop_back();
 
     const std::vector< double > pre_pos = get_global_position( pre_id );
 
-    std::vector< double > probabilities;
+    std::vector< double > weights;
     std::vector< size_t > valid_post_ids;
-    double rnd;
+
     for ( size_t post_id : post_ids )
     {
-      if ( post_id == pre_id && !allow_autapses )
+      if ( post_id == pre_id and not allow_autapses )
       {
         continue;  // Skip self-connections
       }
 
       const std::vector< double > post_pos = get_global_position( post_id );
-      const AbstractLayerPTR post_layer = get_layer( kernel().node_manager.node_id_to_node_collection( post_id ) );
-      const double distance = post_layer->compute_distance( pre_pos, post_pos );
 
-      if ( distance > structural_plasticity_max_distance_ )
+      // Via the layer, so that periodic boundary conditions are respected.
+      const AbstractLayerPTR post_layer = get_layer( kernel().node_manager.node_id_to_node_collection( post_id ) );
+
+      if ( structural_plasticity_mask_ )
       {
-        continue;  // distance > max_distance -> masked out entirely
+        const unsigned int num_dimensions = post_layer->get_num_dimensions();
+        std::vector< double > displacement( num_dimensions );
+        for ( unsigned int dim = 0; dim < num_dimensions; ++dim )
+        {
+          displacement[ dim ] = post_layer->compute_displacement( pre_pos, post_pos, dim );
+        }
+        if ( not structural_plasticity_mask_->inside( displacement ) )
+        {
+          continue;  // Outside the mask.
+        }
       }
 
-      const double prob = gaussian_kernel( distance, structural_plasticity_gaussian_kernel_sigma_ );
-
-      if ( prob > 0 )
+      // Without a kernel, the candidates admitted by the mask are equally likely.
+      double weight = 1.0;
+      if ( structural_plasticity_kernel_ )
       {
-        probabilities.push_back( prob );
+        weight = structural_plasticity_kernel_->value( rng, pre_pos, post_pos, *post_layer, nullptr );
+
+        if ( not std::isfinite( weight ) or weight < 0.0 )
+        {
+          throw BadProperty(
+            "The structural plasticity spatial kernel must evaluate to a finite, non-negative value for every "
+            "candidate pair." );
+        }
+      }
+
+      if ( weight > 0.0 )
+      {
+        weights.push_back( weight );
         valid_post_ids.push_back( post_id );
       }
     }
 
-    if ( probabilities.empty() )
+    if ( weights.empty() )
     {
-      continue;  // Skip if no valid connections are found
+      continue;  // No admissible partner; the element stays vacant.
     }
 
-    rnd = get_rank_synced_rng()->drand();
-
     // Select a post-synaptic neuron using roulette wheel selection
-    int selected_post_idx = roulette_wheel_selection( probabilities, rnd );
-    size_t selected_post_id = valid_post_ids[ selected_post_idx ];
+    const size_t selected_post_idx = roulette_wheel_selection( weights, rng->drand() );
+    const size_t selected_post_id = valid_post_ids[ selected_post_idx ];
 
     // Remove the selected post-synaptic neuron from the list
-    auto post_it = std::find( post_ids.begin(), post_ids.end(), selected_post_id );
+    const auto post_it = std::find( post_ids.begin(), post_ids.end(), selected_post_id );
     if ( post_it != post_ids.end() )
     {
       post_ids.erase( post_it );
@@ -905,9 +924,7 @@ SPManager::global_shuffle_spatial( std::vector< size_t >& pre_ids,
 }
 
 void
-nest::SPManager::enable_structural_plasticity( bool use_gaussian_kernel,
-  double gaussian_kernel_sigma,
-  double max_distance )
+nest::SPManager::enable_structural_plasticity( ParameterPTR spatial_kernel, MaskPTR spatial_mask )
 {
   if ( kernel().vp_manager.get_num_threads() > 1 )
   {
@@ -925,21 +942,13 @@ nest::SPManager::enable_structural_plasticity( bool use_gaussian_kernel,
       "Structural plasticity can not be enabled if use_compressed_spikes "
       "has been set to false." );
   }
-  if ( use_gaussian_kernel and ( not std::isfinite( gaussian_kernel_sigma ) or gaussian_kernel_sigma <= 0.0 ) )
-  {
-    throw BadProperty( "When use_gaussian_kernel is true, gaussian_kernel_sigma must be finite and > 0." );
-  }
-  if ( std::isnan( max_distance ) or max_distance <= 0.0 )
-  {
-    throw BadProperty( "max_distance must be > 0 or infinity." );
-  }
 
-  structural_plasticity_use_gaussian_kernel_ = use_gaussian_kernel;
-  structural_plasticity_gaussian_kernel_sigma_ = gaussian_kernel_sigma;
+  structural_plasticity_kernel_ = spatial_kernel;
+  structural_plasticity_mask_ = spatial_mask;
   structural_plasticity_enabled_ = true;
-  structural_plasticity_max_distance_ = max_distance;
 
-  if ( use_gaussian_kernel )
+  // Both the kernel and the mask need positions.
+  if ( uses_spatial_matching() )
   {
     gather_global_positions_and_ids();
   }

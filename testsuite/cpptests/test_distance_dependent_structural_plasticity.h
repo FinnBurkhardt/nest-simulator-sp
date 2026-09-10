@@ -28,6 +28,7 @@
 
 // C++ includes:
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -40,28 +41,47 @@ namespace nest
 
 /**
  * Test cases: Distance-dependent connection methods in SPManager
+ *
+ * The spatial kernel itself is a regular NEST Parameter and is covered by the PyNEST tests in
+ * testsuite/pytests/structural_plasticity. What remains specific to the SPManager is the weighted
+ * draw over the candidate targets, which is tested here.
  */
 BOOST_AUTO_TEST_SUITE( test_distance_dependent )
 
-BOOST_AUTO_TEST_CASE( test_gaussianKernel )
+BOOST_AUTO_TEST_CASE( test_roulette_wheel_selection_boundaries )
 {
   SPManager sp_manager;
 
-  // Test for zero distance
-  double sigma = 1.0;
+  // With equal weights, the unit interval is split into equal parts.
+  const std::vector< double > uniform { 1.0, 1.0, 1.0, 1.0 };
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( uniform, 0.0 ), 0u );
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( uniform, 0.3 ), 1u );
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( uniform, 0.6 ), 2u );
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( uniform, 0.9 ), 3u );
 
-  double expected = 1.0;
-  BOOST_REQUIRE_CLOSE( sp_manager.gaussian_kernel( 0.0, sigma ), expected, 1e-6 );
+  // Weights need not be normalised, and are interpreted relative to their sum.
+  const std::vector< double > unnormalised { 30.0, 10.0 };
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( unnormalised, 0.7 ), 0u );
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( unnormalised, 0.8 ), 1u );
 
-  // Test for unit distance
-  expected = std::exp( -1.0 );
-  BOOST_REQUIRE_CLOSE( sp_manager.gaussian_kernel( 1.0, sigma ), expected, 1e-6 );
+  // A zero weight is never selected, whatever the random number.
+  const std::vector< double > with_zero { 0.0, 1.0 };
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( with_zero, 0.0 ), 1u );
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( with_zero, 0.999999 ), 1u );
 
-  // Test for negative sigma (will compute as if sigma were positive)
-  sigma = -1.0;
-  double result = sp_manager.gaussian_kernel( 1.0, sigma );
-  expected = std::exp( -1.0 );  // Same as sigma=1 since squared value is used
-  BOOST_REQUIRE_CLOSE( result, expected, 1e-6 );
+  // A random number arbitrarily close to one still yields a valid index.
+  BOOST_REQUIRE_EQUAL( sp_manager.roulette_wheel_selection( uniform, std::nextafter( 1.0, 0.0 ) ), uniform.size() - 1 );
+}
+
+BOOST_AUTO_TEST_CASE( test_roulette_wheel_selection_rejects_degenerate_weights )
+{
+  SPManager sp_manager;
+
+  BOOST_REQUIRE_THROW( sp_manager.roulette_wheel_selection( {}, 0.5 ), std::runtime_error );
+  BOOST_REQUIRE_THROW( sp_manager.roulette_wheel_selection( { 0.0, 0.0 }, 0.5 ), std::runtime_error );
+  BOOST_REQUIRE_THROW( sp_manager.roulette_wheel_selection( { std::numeric_limits< double >::infinity(), 1.0 }, 0.5 ),
+    std::runtime_error );
+  BOOST_REQUIRE_THROW( sp_manager.roulette_wheel_selection( { std::nan( "" ), 1.0 }, 0.5 ), std::runtime_error );
 }
 
 BOOST_AUTO_TEST_SUITE_END()
